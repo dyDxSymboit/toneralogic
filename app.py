@@ -63,7 +63,7 @@ class PriorityThreadPoolExecutor(ThreadPoolExecutor):
         self._work_queue = queue.PriorityQueue()
 
 request_executor = PriorityThreadPoolExecutor(
-    max_workers=10,
+    max_workers=5,
     thread_name_prefix="ask_worker"
 )
 
@@ -536,15 +536,4 @@ def llm_cancel_endpoint():
     except Exception as e:
         print(f"[CANCEL] Error: {e}")
         return jsonify({"success": False, "error": "Cancel error"}), 500
-if __name__ == "__main__":
-    # Optional local runner; Waitress is used in production via wsgi.py
-    try:
-        from waitress import serve
-        print("🎯 Starting Flask server with Waitress (production)...")
-        print("✅ Server is running on http://0.0.0.0:5000")
-        print("📡 Waiting for requests... (Press Ctrl+C to stop)")
-        serve(app, host="0.0.0.0", port=5000, threads=4, channel_timeout=120)
-    except ImportError:
-        print("Waitress not installed; falling back to Flask dev server.")
-        print("✅ Server is running on http://0.0.0.0:5000")
-        app.run(host="0.0.0.0", port=5000, debug=False)
+
