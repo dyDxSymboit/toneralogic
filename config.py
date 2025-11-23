@@ -6,8 +6,8 @@ load_dotenv()
 # API Configuration
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 COHERE_URL = os.getenv("COHERE_URL")
-VECTORSTORE_DIR = os.getenv(r"VECTORSTORE_DIR")
-EMB_MODEL = "BAAI/bge-base-en-v1.5"
+VECTORSTORE_DIR = os.getenv("VECTORSTORE_DIR")
+EMB_MODEL = os.getenv("EMB_MODEL", "BAAI/bge-base-en-v1.5")
 
 # Input Limits
 MAX_WORDS = int(os.getenv("MAX_WORDS", 250))
