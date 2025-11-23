@@ -17,12 +17,19 @@ import queue
 from cache_manager import cache_manager
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from dotenv import load_dotenv
+import os
+load_dotenv()
+
+FRONTEND_URL = os.getenv("FRONTEND_URL")
+
+
 
 app = Flask(__name__)
 
 # Configure CORS properly for React frontend
 CORS(app, 
-     origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+     origins=[FRONTEND_URL],
      supports_credentials=True,
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      allow_headers=["Content-Type", "Authorization", "x-session-id", "X-Session-Id"])
@@ -32,7 +39,7 @@ CORS(app,
 def handle_preflight():
     if request.method == "OPTIONS":
         response = jsonify({"status": "success"})
-        response.headers.add("Access-Control-Allow-Origin", "http://localhost:5173")
+        response.headers.add("Access-Control-Allow-Origin",FRONTEND_URL)
         response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization,x-session-id,X-Session-Id")
         response.headers.add("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
         return response
