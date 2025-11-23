@@ -544,3 +544,6 @@ def llm_cancel_endpoint():
         print(f"[CANCEL] Error: {e}")
         return jsonify({"success": False, "error": "Cancel error"}), 500
 
+@app.get("/")
+def home():
+    return "OK", 200
