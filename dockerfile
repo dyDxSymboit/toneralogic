@@ -1,24 +1,30 @@
-# Use official Python image
+# Use Python 3.11 slim as base
 FROM python:3.11-slim
-
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
 
 # Set working directory
 WORKDIR /app
 
-# Copy all files
+# Install system dependencies for FAISS, torch, etc.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy everything in the current folder to /app
 COPY . /app
 
-# Upgrade pip
-RUN pip install --upgrade pip
+# Upgrade pip and install setuptools/wheel
+RUN pip install --upgrade pip setuptools wheel
 
-# Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Step 1: Install langchain-core first to avoid conflicts
+RUN pip install langchain-core==1.0.2
 
-# Expose the port Railway uses
-EXPOSE 8000
+# Step 2: Install the rest of the requirements
+RUN pip install -r requirements.txt
 
-# Start command for Railway
-CMD ["gunicorn", "wsgi:app", "--bind", "0.0.0.0:8000", "--workers", "1", "--threads", "4", "--timeout", "120"]
+# Expose Railway port
+ENV PORT 8080
+
+# Start the Flask app with Gunicorn using your config
+CMD ["gunicorn", "app:app", "--config", "gunicorn.conf.py"]
