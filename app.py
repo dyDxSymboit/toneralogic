@@ -18,7 +18,7 @@ app = Flask(__name__)
 
 # Configure CORS properly for React frontend
 CORS(app, 
-     origins=[FRONTEND_URL] if FRONTEND_URL else ["http://localhost:3000"],
+     origins=[FRONTEND_URL],
      supports_credentials=True,
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      allow_headers=["Content-Type", "Authorization", "x-session-id", "X-Session-Id"])
@@ -517,8 +517,14 @@ def cleanup_executor():
 import atexit
 atexit.register(cleanup_executor)
 
+def get_port(default=5000):
+    """Get the port from environment (Railway) or default (local)."""
+    try:
+        return int(os.environ.get("PORT", default))
+    except:
+        return default
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    print(f"✅ Flask app starting on port {port}...")
-    # Production settings - no debug mode
-    app.run(host="0.0.0.0", port=port, debug=False)
+    port = get_port()
+    print(f"✅ Flask app starting locally on port {port}...")
+    app.run(host="0.0.0.0", port=port, debug=True) 
