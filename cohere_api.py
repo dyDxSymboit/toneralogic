@@ -19,6 +19,9 @@ api_usage_stats = {
 }
 api_lock = threading.Lock()
 
+# Thread-safe FAISS initialization
+faiss_init_lock = threading.Lock()
+
 def title_score(doc_title: str, question: str) -> float:
     """Calculate title relevance score"""
     if not doc_title:
@@ -28,8 +31,26 @@ def title_score(doc_title: str, question: str) -> float:
     common_words = len(set(title_norm.split()) & set(question_norm.split()))
     return common_words / max(len(title_norm.split()), 1)
 
+def detect_relevant_folders_local(question, all_folders):
+    """Local version of folder detection to avoid retrieval import"""
+    question_lower = normalize_text(question)
+    
+    folders = []
+    restricted = False
+    
+    # Simple folder detection logic
+    for folder in all_folders:
+        folder_lower = normalize_text(folder)
+        if folder_lower in question_lower:
+            folders.append(folder)
+            restricted = True
+    
+    return folders, restricted
+
 def ask_cohere_smart(question: str, base_top_k: int = 8):
-    import retrieval
+    # Import app's pre-initialized FAISS instead of retrieval directly
+    from app import vectorstore as app_vectorstore
+    from app import ALL_FOLDERS as app_folders
     
     # API throttling
     acquired = cohere_api_semaphore.acquire(timeout=30)
@@ -43,18 +64,12 @@ def ask_cohere_smart(question: str, base_top_k: int = 8):
             api_usage_stats["concurrent_calls"] += 1
             api_usage_stats["total_calls"] += 1
         
-        # Ensure FAISS is ready
-        if retrieval.vectorstore is None:
-            try:
-                retrieval.initialize_retrieval()
-            except Exception as e:
-                return "❌ Service unavailable: FAISS index not loaded."
+        # Use pre-initialized FAISS from app
+        if app_vectorstore is None:
+            return "❌ Service unavailable: FAISS index not loaded."
         
-        if retrieval.vectorstore is None:
-            return "❌ Vectorstore not initialized."
-
-        # Step 1: Detect folders
-        folders, restricted = retrieval.detect_relevant_folders(question)
+        # Step 1: Detect folders using local function
+        folders, restricted = detect_relevant_folders_local(question, app_folders)
         print(f"[DEBUG] Folder decision: {folders}, restricted={restricted}")
 
         # Step 2: Clean query
@@ -74,7 +89,7 @@ def ask_cohere_smart(question: str, base_top_k: int = 8):
         if restricted and folders and is_procedural:
             print(f"[DEBUG] Procedural question - fetching ALL chunks from: {folders}")
             for folder in folders:
-                for doc in retrieval.vectorstore.docstore._dict.values():
+                for doc in app_vectorstore.docstore._dict.values():
                     doc_folder = doc.metadata.get("folder", "").strip().lower()
                     if doc_folder == folder.lower():
                         raw_docs_with_score.append((doc, title_score(doc.metadata.get("title",""), question)))
@@ -83,7 +98,7 @@ def ask_cohere_smart(question: str, base_top_k: int = 8):
                 print(f"[DEBUG] Folder-restricted search: {folders}")
                 for folder in folders:
                     try:
-                        folder_docs = retrieval.vectorstore.similarity_search_with_score(
+                        folder_docs = app_vectorstore.similarity_search_with_score(
                             query, k=base_top_k * 3, filter={"folder": folder}
                         )
                         folder_docs = [(doc, score + title_score(doc.metadata.get("title",""), question)) for doc, score in folder_docs]
@@ -91,7 +106,7 @@ def ask_cohere_smart(question: str, base_top_k: int = 8):
                     except Exception as e:
                         print(f"[DEBUG] Error retrieving from folder '{folder}': {e}")
             else:
-                raw_docs_with_score = retrieval.vectorstore.similarity_search_with_score(query, k=base_top_k * 8)
+                raw_docs_with_score = app_vectorstore.similarity_search_with_score(query, k=base_top_k * 8)
                 raw_docs_with_score = [(doc, score + title_score(doc.metadata.get("title",""), question)) for doc, score in raw_docs_with_score]
 
         if not raw_docs_with_score:
@@ -105,7 +120,9 @@ def ask_cohere_smart(question: str, base_top_k: int = 8):
         context_chunks = []
         for i, doc in enumerate(raw_docs):
             folder = doc.metadata.get("folder", "unknown")
-            cleaned = retrieval.clean_context(doc.page_content, question, restricted)
+            # Import clean_context from retrieval
+            from retrieval import clean_context
+            cleaned = clean_context(doc.page_content, question, restricted)
             # Include source information like cohereSecond.py
             chunk = f"[From: {folder} | Title: {doc.metadata.get('title','unknown')}]\n{cleaned}"
             context_chunks.append(chunk)
@@ -185,3 +202,8 @@ def ask_cohere_smart(question: str, base_top_k: int = 8):
         cohere_api_semaphore.release()
         with api_lock:
             api_usage_stats["concurrent_calls"] -= 1
+
+def get_api_usage():
+    """Get API usage statistics"""
+    with api_lock:
+        return api_usage_stats.copy()

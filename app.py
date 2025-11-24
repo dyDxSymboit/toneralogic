@@ -23,6 +23,11 @@ CORS(app,
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      allow_headers=["Content-Type", "Authorization", "x-session-id", "X-Session-Id"])
 
+# Thread-safe FAISS initialization
+faiss_app_lock = threading.Lock()
+active_threads = 0
+threads_lock = threading.Lock()
+
 # Safe import function with better error handling
 def safe_import(module_name, function_name=None, default=None):
     try:
@@ -85,6 +90,25 @@ except ImportError as e:
     def normalize_text(text):
         return text.lower().strip() if text else ""
 
+# Thread-safe FAISS initialization
+def initialize_faiss_safely():
+    """Thread-safe FAISS initialization"""
+    global vectorstore, ALL_FOLDERS
+    
+    with faiss_app_lock:
+        if vectorstore is None:
+            try:
+                from retrieval import initialize_retrieval
+                vectorstore, ALL_FOLDERS = initialize_retrieval()
+                print(f"✅ FAISS loaded with {len(ALL_FOLDERS)} folders")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize vectorstore: {e}")
+                vectorstore = None
+                ALL_FOLDERS = set()
+
+# Initialize FAISS at startup
+initialize_faiss_safely()
+
 # ⭐⭐⭐ FIXED COHERE IMPORT - Use lazy import to avoid circular imports ⭐⭐⭐
 def ask_cohere_smart(question):
     """Lazy import for cohere function to avoid circular imports"""
@@ -130,25 +154,15 @@ except ImportError as e:
             return False
     cache_manager = FallbackCacheManager()
 
-# Try to initialize FAISS (this can be slow)
-try:
-    from retrieval import initialize_retrieval
-    vectorstore, ALL_FOLDERS = initialize_retrieval()
-    print(f"✅ Loaded {len(ALL_FOLDERS)} folders from FAISS")
-except ImportError as e:
-    print(f"⚠️ Retrieval module not available: {e}")
-except Exception as e:
-    print(f"⚠️ Failed to initialize vectorstore: {e}")
-    print("⚠️ Continuing without vectorstore - some features may be limited")
-
 # ThreadPoolExecutor with priority queue
 class PriorityThreadPoolExecutor(ThreadPoolExecutor):
     def __init__(self, max_workers=None, thread_name_prefix=''):
         super().__init__(max_workers, thread_name_prefix)
         self._work_queue = queue.PriorityQueue()
 
+# Updated for 8 concurrent requests (2 workers × 4 threads)
 request_executor = PriorityThreadPoolExecutor(
-    max_workers=5,
+    max_workers=8,  # Increased to match gunicorn capacity
     thread_name_prefix="ask_worker"
 )
 
@@ -202,6 +216,13 @@ def enforce_prompt_limit():
 
 def process_question(question, cancel_event):
     """Process question in worker thread"""
+    global active_threads
+    
+    thread_id = threading.get_ident()
+    with threads_lock:
+        active_threads += 1
+        print(f"🧵 [THREAD {thread_id}] Started. Active threads: {active_threads}/8")
+    
     try:
         if cancel_event.is_set():
             return {"success": False, "error": "Request canceled"}
@@ -235,6 +256,10 @@ def process_question(question, cancel_event):
     except Exception as e:
         print(f"[QUEUE] Error processing question: {e}")
         return {"success": False, "error": f"Processing error: {str(e)}"}
+    finally:
+        with threads_lock:
+            active_threads -= 1
+            print(f"🧵 [THREAD {thread_id}] Finished. Active threads: {active_threads}/8")
 
 def get_request_priority(question):
     """Assign priority to requests - lower number = higher priority"""
@@ -297,22 +322,14 @@ def health_check():
         except:
             pass
         
-        # Vectorstore status with safe imports
-        vectorstore_ready = False
-        folders_loaded = len(ALL_FOLDERS)
-        
-        try:
-            from retrieval import vectorstore as retrieval_vectorstore
-            vectorstore_ready = retrieval_vectorstore is not None
-        except:
-            pass
-        
         # App is healthy as long as Flask is running
         return jsonify({
             "status": "healthy",
-            "folders_loaded": folders_loaded,
-            "vectorstore_ready": vectorstore_ready,
+            "folders_loaded": len(ALL_FOLDERS),
+            "vectorstore_ready": vectorstore is not None,
             "redis": redis_status,
+            "concurrent_capacity": "8 requests (2 workers × 4 threads)",
+            "active_threads": active_threads,
             "queue": {
                 "active_workers": active_workers,
                 "pending_tasks": queue_size
@@ -465,7 +482,9 @@ def api_stats():
             "cohere_api_usage": cohere_stats,
             "timestamp": time.time(),
             "queue_size": request_executor._work_queue.qsize(),
-            "active_workers": request_executor._max_workers
+            "active_workers": request_executor._max_workers,
+            "active_threads": active_threads,
+            "max_concurrent": 8
         })
     except Exception as e:
         return jsonify({
@@ -481,7 +500,20 @@ def queue_status():
         "status": "operational",
         "active_workers": request_executor._max_workers,
         "pending_tasks": queue_size,
-        "max_concurrent": request_executor._max_workers
+        "max_concurrent": 8,
+        "active_threads": active_threads,
+        "configuration": "2 workers × 4 threads"
+    })
+
+@app.route("/threads", methods=["GET"])
+def thread_monitor():
+    """Monitor active threads"""
+    return jsonify({
+        "active_threads": active_threads,
+        "max_concurrent": 8,
+        "gunicorn_workers": 2,
+        "gunicorn_threads": 4,
+        "capacity": "8 simultaneous requests"
     })
 
 @app.route("/cache/stats", methods=["GET"])
@@ -522,4 +554,5 @@ def get_port():
 if __name__ == "__main__":
     port = get_port()
     print(f"✅ Flask app starting on 0.0.0.0:{port}...")
-    app.run(host="0.0.0.0", port=port, debug=False)  # debug=False for production
+    print(f"🚀 Configured for 8 simultaneous requests (2 workers × 4 threads)")
+    app.run(host="0.0.0.0", port=port, debug=False)
