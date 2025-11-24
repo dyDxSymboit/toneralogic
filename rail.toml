@@ -1,0 +1,15 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "gunicorn app:app --workers 5 --threads 1 --bind 0.0.0.0:$PORT"
+
+[healthcheck]
+path = "/health"
+port = "PORT"
+timeout = 60
+interval = 30
+maxRetries = 3
+
+[service]
+httpPort = "PORT"

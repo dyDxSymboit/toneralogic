@@ -1,6 +1,4 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from dotenv import load_dotenv
+import os
 import time
 import json
 import hashlib
@@ -8,54 +6,54 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import queue
-import os
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from dotenv import load_dotenv
 
 load_dotenv()
 
+# Initialize app first
+app = Flask(__name__)
 FRONTEND_URL = os.getenv("FRONTEND_URL")
 
-app = Flask(__name__)
-
-# Configure CORS properly for React frontend
+# Configure CORS
 CORS(app, 
-     origins=[FRONTEND_URL],
+     origins=[FRONTEND_URL] if FRONTEND_URL else ["http://localhost:3000"],
      supports_credentials=True,
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
      allow_headers=["Content-Type", "Authorization", "x-session-id", "X-Session-Id"])
 
-# Handle preflight OPTIONS requests globally
-@app.before_request
-def handle_preflight():
-    if request.method == "OPTIONS":
-        response = jsonify({"status": "success"})
-        response.headers.add("Access-Control-Allow-Origin", FRONTEND_URL or "http://localhost:3000")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization,x-session-id,X-Session-Id")
-        response.headers.add("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
-        return response
+# Safe import function with better error handling
+def safe_import(module_name, function_name=None, default=None):
+    try:
+        module = __import__(module_name)
+        if function_name:
+            return getattr(module, function_name)
+        return module
+    except ImportError as e:
+        print(f"⚠️ Failed to import {module_name}: {e}")
+        return default
 
-# Initialize components with error handling
-print("🚀 Initializing Flask LLM API...")
-
-# Initialize with safe defaults
+# Initialize components safely
 vectorstore = None
 ALL_FOLDERS = set()
-redis_client = None
-cache_manager = None
+redis_client = safe_import('redis_client', 'redis_client')
+cache_manager = safe_import('cache_manager', 'cache_manager')
 
-# Import modules with proper error handling
+# Import config with defaults
 try:
     from config import MAX_WORDS, MAX_CHARS, MIN_CHARS, PROMPTS_PER_WINDOW, WINDOW_SECONDS, CACHE_TTL_SECONDS, CACHE_PREFIX
     print("✅ Config loaded")
 except ImportError as e:
-    print(f"⚠️ Config module not available: {e}")
-    # Set default values
-    MAX_WORDS = 100
-    MAX_CHARS = 1000
+    print(f"⚠️ Config import failed: {e}")
+    # Set defaults
+    MAX_WORDS = 250
+    MAX_CHARS = 2000
     MIN_CHARS = 3
-    PROMPTS_PER_WINDOW = 10
-    WINDOW_SECONDS = 43200  # 12 hours
-    CACHE_TTL_SECONDS = 3600
-    CACHE_PREFIX = "cache"
+    PROMPTS_PER_WINDOW = 15
+    WINDOW_SECONDS = 43200
+    CACHE_TTL_SECONDS = 21600
+    CACHE_PREFIX = "cache:answer"
 
 try:
     from validation import validate_question, sanitize_input
@@ -517,14 +515,11 @@ def cleanup_executor():
 import atexit
 atexit.register(cleanup_executor)
 
-def get_port(default=5000):
-    """Get the port from environment (Railway) or default (local)."""
-    try:
-        return int(os.environ.get("PORT", default))
-    except:
-        return default
+def get_port():
+    """Get the port from Railway environment"""
+    return int(os.environ.get("PORT", 8000))
 
 if __name__ == "__main__":
     port = get_port()
-    print(f"✅ Flask app starting locally on port {port}...")
-    app.run(host="0.0.0.0", port=port, debug=True) 
+    print(f"✅ Flask app starting on 0.0.0.0:{port}...")
+    app.run(host="0.0.0.0", port=port, debug=False)  # debug=False for production
